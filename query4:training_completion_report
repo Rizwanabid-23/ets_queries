@@ -1,0 +1,104 @@
+
+select * from training_completion_report(training_item:='cyber',course_title:='cyber',training_revision:='B',is_latest_training:=1,is_latest_course:=1,course_revision_number:=null,sorted_by:='course_code',order_by:='asc',limit_value:=200);
+-- trainee_username and supervisor_username is a number
+-- status_num: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
+-- training_status: 1=active, 0=deactivated, 7=unAssigned
+-- collapse_deptId is not tested bcz there is no data in collapse department
+-- problem with job title seelction box on frotend, switches the columns in databox
+-- problem with course type selection box on frontend, does not allow to deselect option
+-- problem with job title selection box frontend, sends text as parameter instead of number
+
+create or replace function training_completion_report(
+training_item text default null,
+training_revision text default null,
+is_latest_training int default 1,
+course_title text default null,
+course_revision_number int default null,
+is_latest_course int default 1,
+trainee_username int default null,
+supervisor_username int default null,
+status_num int default null,
+training_status int default 1,
+categoryId int default null,
+departmentId int default null,
+collapse_deptId int default null,
+course_type_number int default null,
+job_title_number int default null,
+completion_date_from date default null,
+completion_date_to date default null,
+sorted_by TEXT DEFAULT 'department',
+order_by TEXT DEFAULT 'asc',
+limit_value INT DEFAULT 8,
+offset_value INT DEFAULT 0
+)
+returns table(
+trainee_first_name text,
+trainee_last_name text,
+supervisor_first_name text,
+supervisor_last_name text,
+department_name text,
+job_title text,
+training_item_code text,
+training_item_description text,
+training_item_title text,
+training_item_revision text,
+course_type text,
+category_name text,
+course_code text,
+course_revision text,
+course_completion_date date,
+status text
+) 
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    sql_query TEXT;
+begin
+	sql_query:='select u1."FirstName"::text as trainee_first_name, u1."LastName"::text as trainee_last_name, 
+	u2."FirstName"::text as supervisor_first_name,u2."LastName"::text as supervisor_last_name ,
+	d."DepartmentName"::text ,jt."TitleName"::text as job_title ,ti."TrainingItemCode"::text ,ti."Description"::text ,
+	ti."TrainingItemTitle"::text, ti."RevisionLabel"::text ,ct."CourseType"::text ,cc."CategoryName"::text ,c."CourseCode"::text ,
+	c."RevisionSequenceNumber"::text ,ut."CompletionDate"::date , pst."StatusTitle"::text
+	from "User" u1 join "User" u2 on u1."ManagerID"=u2."ID" left join "Department" d on u1."DepartmentID" =d."ID" 
+	left join "JobTitle" jt on u1."JobTitleID"=jt."ID" join "UserTraining" ut on ut."UserID" =u1."ID" join "Course" c 
+	on c."ID" =ut."CourseID" join "CourseTrainingItems" cti on c."ID" =cti."CourseID" join "TrainingItem" ti on cti."TrainingItemID" =ti."ID"
+	join "CourseType" ct on c."CourseTypeID" =ct."ID"  join "CourseCategory" cc on c."CourseCategoryID" =cc."ID" join "ProgressStatusType" pst on ut."ProgressStatusID" =pst."ID" 
+	where ti."IsActive" =B''1'' and cti."IsActive"=B''1''  and c."IsActive"=B''1'' and u1."FirstName"::text not like ''%validation%'' and ti."TrainingItemCode" not like ''%Validation%'' and u1."FirstName" not like ''%Test%'' ';
+	IF training_item IS NOT NULL THEN sql_query := sql_query || ' AND ti."TrainingItemTitle" LIKE ''%' || training_item || '%'' '; END IF;
+	IF course_title IS NOT NULL THEN sql_query := sql_query || ' AND c."CourseCode" LIKE ''%' || course_title || '%'' '; END IF;
+	if is_latest_training<>0 then sql_query := sql_query || 'AND ti."IsLatest"::int = ' || is_latest_training;
+    else
+    	IF training_revision IS NOT NULL then sql_query := sql_query || ' AND ti."RevisionLabel"::text LIKE ''%' || training_revision || '%'' '; END IF;
+    end if;
+    if is_latest_course<>0 then sql_query := sql_query || 'AND ti."IsLatest"::int = ' || is_latest_course;
+    else
+    	IF course_revision_number IS NOT NULL then sql_query := sql_query || ' AND c."RevisionSequenceNumber"::text LIKE ''%' || course_revision_number || '%'' '; END IF;
+    end if;
+	IF trainee_username IS NOT NULL THEN sql_query := sql_query || ' AND u1."ID" =' || trainee_username ; END IF;
+	IF supervisor_username IS NOT NULL THEN sql_query := sql_query || ' AND u2."ID" =' || supervisor_username ; END IF;
+	IF status_num IS NOT NULL THEN sql_query := sql_query || ' AND ut."ProgressStatusID" =' || status_num ; END IF;
+   	IF categoryId IS NOT NULL THEN  sql_query := sql_query || ' AND c."CourseCategoryID"::int = ' || categoryId ; END IF;
+    IF departmentId IS NOT NULL THEN  sql_query := sql_query || ' AND d."ID" = ' || departmentId ; END IF;
+    IF collapse_deptId IS NOT NULL THEN  sql_query := sql_query || ' AND u1."CollapseDepartment" = ' || collapse_deptId ; END IF;
+    IF course_type_number IS NOT NULL THEN  sql_query := sql_query || ' AND c."CourseTypeID" = ' || course_type_number ; END IF;
+    IF job_title_number IS NOT NULL THEN  sql_query := sql_query || ' AND jt."ID" = ' || job_title_number ; END IF;
+    IF training_status IS NOT NULL and training_status=1 THEN  sql_query := sql_query || 'and ut."IsActive"::int = 1' ; END IF;
+    IF training_status IS NOT NULL and training_status=0 THEN  sql_query := sql_query || 'and ut."IsActive"::int = 0' ; END IF;
+	IF training_status IS NOT NULL and training_status=7 THEN  sql_query := sql_query || 'and ut."AssignmentReasonCode"::int = 7' ; END IF;
+	if completion_date_from is not null then sql_query := sql_query || ' AND ut."CompletionDate" >= ' || quote_literal(completion_date_from); end if;
+	if completion_date_to is not null then sql_query := sql_query || ' AND ut."CompletionDate" <= ' || quote_literal(completion_date_to); end if;
+	sql_query := sql_query || ' ORDER BY ' || 
+		 CASE 
+		     WHEN sorted_by = 'department' THEN 'd."DepartmentName"'
+		     WHEN sorted_by = 'job_title' THEN 'jt."TitleName"'
+		     when sorted_by = 'training_item_code' then 'ti."TrainingItemCode"'
+		     when sorted_by = 'category_name' then 'cc."CategoryName"'
+		     when sorted_by = 'course_code' then 'c."CourseCode"'
+		     ELSE 'd."DepartmentName"' 
+		 END;	
+		IF order_by = 'desc' then sql_query := sql_query || ' DESC'; else sql_query := sql_query || ' ASC'; END IF;
+		sql_query := sql_query || ' LIMIT ' || limit_value || ' OFFSET ' || offset_value;
+   RETURN QUERY EXECUTE sql_query;
+END;
+$$;
+
