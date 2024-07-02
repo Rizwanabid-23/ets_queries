@@ -1,0 +1,146 @@
+
+--query 3: General Course Report
+-- is_latest_course parameter has tobe passed every time
+-- all parameters are optional in this query, defaults have been set
+-- course_revision_number is to be provided null to get all values of revision
+-- sorting with Created_date may be different on website(to be monitered)
+-- is_latest_training is to be visited as labels are in alphabets in db and do not match correctly.
+
+select * from general_course_report(limit_value:=200, published_course:=0,training_item_title_name:=null,is_latest_course:=0, approverId:=651,is_latest_training:=0, course_revision_number:=null,sorted_by:=null,order_by:='asc',active_course:=1);
+
+CREATE OR REPLACE FUNCTION general_course_report(
+  course_name TEXT DEFAULT NULL,
+  is_latest_course int default 1,
+  course_revision_number INT DEFAULT NULL, 
+  training_item_title_name TEXT DEFAULT NULL,
+  is_latest_training int default 1,
+  training_revision text DEFAULT null,     
+  auto_assignment INT DEFAULT NULL,
+  course_type_number INT DEFAULT NULL,
+  categoryId INT DEFAULT NULL,
+  usergroupId INT DEFAULT NULL,
+  approverId INT DEFAULT NULL,
+  create_date_from DATE DEFAULT NULL,
+  create_date_to DATE DEFAULT NULL,
+  approval_date_from DATE DEFAULT NULL,
+  approval_date_to DATE DEFAULT NULL,
+  active_course INT DEFAULT 1,
+  published_course INT DEFAULT 1,
+  sorted_by TEXT DEFAULT 'CourseTitle',
+  order_by TEXT DEFAULT 'asc',
+  limit_value INT DEFAULT 8,
+  offset_value INT DEFAULT 0
+)
+RETURNS TABLE(
+  course_title TEXT,
+  course_code TEXT,
+  course_revision INT,
+  course_category TEXT,
+  course_type TEXT,
+  training_item_title TEXT,
+  auto_reassign INT,
+  course_start_date DATE,
+  auto_assign_members_alliance INT,
+  user_groups TEXT,
+  approval_req_on_completion INT
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    sql_query TEXT;
+BEGIN
+    sql_query := 'SELECT c."CourseTitle"::text,
+                  c."CourseCode"::text, 
+                  c."RevisionSequenceNumber"::int, 
+                  cc."CategoryName"::text, 
+                  ct."CourseType"::text,
+                  STRING_AGG(DISTINCT ti."TrainingItemTitle", '' ,'')::text AS "TrainingItemTitles", 
+                  c."AutoReAssign"::int, 
+                  c."CourseStartingDate"::date, 
+                  c."AutoAssignToMembersOfComplianceGroups"::int,   
+                  string_agg(DISTINCT CASE WHEN ug."IsActive" = B''1'' THEN ug."GroupName" ELSE NULL END, '', '')::text as "UserGroup",
+                  c."ApprovalRequiredOnTrainingCompletion"::int
+                FROM "Course" c
+                JOIN "CourseTrainingItems" cti ON c."ID" = cti."CourseID"
+                JOIN "TrainingItem" ti ON ti."ID" = cti."TrainingItemID"
+                JOIN "CourseCategory" cc ON cc."ID" = c."CourseCategoryID"
+                JOIN "CourseType" ct ON c."CourseTypeID" = ct."ID"
+                LEFT JOIN "CourseCompliance" cc2 ON cc2."CourseID" = c."ID"
+                LEFT JOIN "UserGroup" ug ON cc2."UserGroupID" = ug."ID" 
+                WHERE 1 = 1   '; -- Placeholder for dynamic conditions
+    IF active_course <> 1 THEN
+        sql_query := sql_query || ' AND c."IsActive"::int = 0 ';
+    END IF;
+    IF published_course <> 1 THEN
+        sql_query := sql_query || ' AND c."IsPublished"::int = 0 ';
+    END IF;
+    IF course_name IS NOT NULL THEN
+        sql_query := sql_query || ' AND c."CourseTitle" LIKE ''%' || course_name || '%'' ';
+    END IF;
+   if is_latest_course<>0 then
+    	sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest_course;
+    else
+    	IF course_revision_number IS NOT NULL THEN
+        	sql_query := sql_query || ' AND c."RevisionSequenceNumber" = ' || course_revision_number;
+    	END IF;
+    end if;
+    if is_latest_training<>0 then
+    	sql_query := sql_query || 'AND ti."IsLatest"::int = ' || is_latest_training;
+    else
+    	IF training_revision IS NOT NULL THEN
+        	sql_query := sql_query || ' AND ti."RevisionLabel"::text LIKE ''%' || training_revision || '%'' ';
+    	END IF;
+    end if;
+    IF training_item_title_name IS NOT NULL THEN 
+        sql_query := sql_query || ' AND ti."TrainingItemTitle" LIKE ''%' || training_item_title_name || '%'' ';
+    END IF;
+   	IF auto_assignment IS NOT NULL THEN 
+        sql_query := sql_query || ' AND c."AutoReAssign"::int = ' || auto_assignment ;
+    END IF;
+   	IF course_type_number IS NOT NULL THEN 
+        sql_query := sql_query || ' AND ct."ID"::int = ' || course_type_number ;
+    END IF;
+   	IF categoryId IS NOT NULL THEN 
+        sql_query := sql_query || ' AND c."CourseCategoryID"::int = ' || categoryId ;
+    END IF;
+    IF usergroupId IS NOT NULL THEN 
+        sql_query := sql_query || ' AND ug."ID"::int = ' || usergroupId ;
+    END IF;
+	if create_date_from is not null then
+		sql_query := sql_query || ' AND c."CreatedDate" >= ' || quote_literal(create_date_from);
+	end if;
+	if create_date_to is not null then
+		sql_query := sql_query || ' AND c."CreatedDate" <= ' || quote_literal(create_date_to);
+	end if;
+	if approval_date_from is not null then
+		sql_query := sql_query || ' AND c."ApprovedOn" >= ' || quote_literal(approval_date_from);
+	end if;
+	if approval_date_to is not null then
+		sql_query := sql_query || ' AND c."ApprovedOn" <= ' || quote_literal(approval_date_to);
+	end if;
+    -- Group By and Order By
+    sql_query := sql_query || ' GROUP BY c."CourseTitle", c."CourseCode", c."RevisionSequenceNumber", cc."CategoryName", ct."CourseType", 
+                         c."AutoReAssign", c."CourseStartingDate", c."AutoAssignToMembersOfComplianceGroups", c."ApprovalRequiredOnTrainingCompletion" '; 
+	sql_query := sql_query || ' ORDER BY ' || 
+	 CASE 
+	     WHEN sorted_by = 'course_title' THEN 'c."CourseTitle"'
+	     WHEN sorted_by = 'course_code' THEN 'c."CourseCode"'
+	     when sorted_by = 'course_revision' then 'c."RevisionSequenceNumber"'
+	     when sorted_by = 'course_category' then 'cc."CategoryName"'
+	     when sorted_by = 'course_type' then 'ct."CourseType"'
+	     when sorted_by = 'training_item_title' then 'ti."TrainingItemTitle"'
+	     when sorted_by = 'course_start_date' then 'c."CourseStartingDate"::date'
+	     when sorted_by = 'user_groups' then 'ug."GroupName"'
+	     ELSE 'c."CourseTitle"' 
+	 END;
+	 IF order_by = 'desc' THEN
+		sql_query := sql_query || ' DESC'; 
+	 ELSE
+		sql_query := sql_query || ' ASC'; 
+	 END IF;
+	sql_query := sql_query || ' LIMIT ' || limit_value || ' OFFSET ' || offset_value;
+   RETURN QUERY EXECUTE sql_query;
+END;
+$$;
+
+

@@ -1,0 +1,102 @@
+
+--query 2: User report
+--status: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
+-- username(trainee name) is a cumpulsory parameter
+--is_latest parameter has to be passes every time
+
+select * from ilt_user_report(user_name := 'ahsanali',revision_num := 1,is_latest := 1, order_by := 'desc', sorted_by := 'course_code', categoryId :=138);
+
+
+create or replace function ilt_user_report(
+	user_name text,	
+	course_title text default null,
+	revision_num int default 1,
+	is_latest int default 1,
+	categoryId int default null,
+	status_num int default null,
+	start_date_from date default null,
+	start_date_to date default null,
+	end_date_from date default null,
+	end_date_to date default null,
+	sorted_by text DEFAULT 'trainee_name',
+    order_by text DEFAULT 'asc',
+    limit_value int DEFAULT 8,
+    offset_value int DEFAULT 0
+)
+returns table (
+	trainee_first_name text,
+	trainee_last_name text,
+	supervisor_first_name text,
+	supervisor_last_name text,
+	course_code text,
+	course_name text,
+	revision_number int,
+	instance_title text,
+	start_date date,
+	due_date date,
+	status text
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    sql_query text;
+BEGIN
+    sql_query := 	'select u."FirstName"::text, u."LastName"::text , u2."FirstName"::text, u2."LastName"::text ,c."CourseCode"::text ,
+					c."CourseTitle"::text ,c."RevisionSequenceNumber"::int , ci."Title"::text as "Instance Title",ut."StartDate"::date ,ut."EndDate"::date as "Due Date", pst."StatusTitle"::text 
+					from "User" u join "UserTraining" ut on u."ID" =ut."UserID" join "Course" c on c."ID" =ut."CourseID" join "User" u2 on u."ManagerID" =u2."ID"
+					left join "CourseInstance" ci on ut."CourseInstanceID" =ci."ID" join "ProgressStatusType" pst on pst."ID" =ut."ProgressStatusID" 
+					join "CourseCategory" cc on cc."ID" =c."CourseCategoryID" 
+					where c."IsActive"=B''1'' and ci."Title" is not null and u."UserName" = ''' || user_name || '''' ;
+					IF course_title IS NOT NULL THEN
+    				sql_query := sql_query || ' AND c."CourseTitle" like ''%' || course_title || '%'' ';
+					END IF;
+					IF categoryId IS NOT NULL THEN
+        			sql_query := sql_query || ' AND cc."ID" = ' || categoryId;
+    				END IF;
+    				if is_latest <> 0 then
+    				sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest;
+    				else sql_query := sql_query || 'AND c."RevisionSequenceNumber" = ' || revision_num;
+    				end if;
+    				IF status IS NOT NULL THEN
+        			sql_query := sql_query || ' AND ut."ProgressStatusID" = ' || status_num;
+   					END IF;
+   				-- Add filters for start_date and end_date 
+				  IF start_date_from IS NOT NULL THEN
+				    sql_query := sql_query || ' AND ut."StartDate" >= ' || quote_literal(start_date_from);
+				  END IF;
+				
+				  IF start_date_to IS NOT NULL THEN
+				    sql_query := sql_query || ' AND ut."StartDate" <= ' || quote_literal(start_date_to);
+				  END IF;
+				  
+				  IF end_date_from IS NOT NULL THEN
+				    sql_query := sql_query || ' AND ut."EndDate" >= ' || quote_literal(end_date_from);
+				  END IF;
+				  
+				  IF end_date_to IS NOT NULL THEN
+				    sql_query := sql_query || ' AND ut."EndDate" <= ' || quote_literal(end_date_to);
+				  END IF; 
+   				sql_query := sql_query || ' ORDER BY ' || 
+                 CASE 
+                     WHEN sorted_by = 'trainee_name' THEN 'u."FirstName"'
+                     WHEN sorted_by = 'course_name' THEN 'c."CourseTitle"'
+                     WHEN sorted_by = 'course_code' THEN 'c."CourseCode"'
+                     when sorted_by = 'revision_no' then 'c."RevisionSequenceNumber"'
+                     when sorted_by = 'start_date' then 'ut."StartDate"'
+                     when sorted_by = 'end_date' then 'ut."EndDate"'
+                     when sorted_by = 'completion_date' then 'ut."CompletionDate"'
+                     when sorted_by = 'status' then 'ut."ProgressStatusID"'
+                     when sorted_by = 'supervisor' then 'u."ManagerID"'
+                     ELSE 'u."FirstName"'  -- Default to trainee_name
+                 END;
+    				IF order_by = 'desc' THEN
+        				sql_query := sql_query || ' DESC'; 
+    				ELSE
+        				sql_query := sql_query || ' ASC'; 
+    				END IF;
+    			sql_query := sql_query || ' LIMIT ' || limit_value || ' OFFSET ' || offset_value;
+    RETURN QUERY EXECUTE sql_query;
+END;
+$$;
+
+

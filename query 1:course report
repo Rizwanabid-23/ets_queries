@@ -1,0 +1,98 @@
+
+-- query 1: course report
+
+SELECT * FROM course_report( course_title := 'cyber',is_latest := 0,revision_no := 5,limit_value := 16,offset_value := 16,order_by := 'desc');
+--status: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
+--categoryId is to be provided in number
+--always have to pass course title and is_latest flag
+--start row and end row can be passed, be default they are 1,8 respectively
+--revision flag will only work when is_latest is off
+--sorted_by includes 'sort by' values
+--order_by includes 'asc' or 'desc'
+
+CREATE OR REPLACE FUNCTION course_report(
+    course_title text,
+    trainee_user_name text DEFAULT null,
+    training_status int DEFAULT null,
+    categoryId int DEFAULT null,
+    status int DEFAULT null,
+    sorted_by text DEFAULT 'trainee_name',
+    order_by text DEFAULT 'asc',
+    revision_no int DEFAULT 1,
+    is_latest int default 1,
+    limit_value int DEFAULT 8,
+    offset_value int DEFAULT 0
+)
+RETURNS TABLE (
+    first_name text,
+	last_name text,
+	course_name text,
+	revision_number int,
+	start_date date,
+	end_date date,
+	completion_score int
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    sql_query text;
+BEGIN
+    sql_query := 'SELECT u."FirstName"::text, u."LastName"::text,c."CourseTitle"::text, c."RevisionSequenceNumber"::int,
+                         ut."StartDate"::date,
+                         ut."EndDate"::date, ut."CompletedPercentage"::int
+                  FROM "UserTraining" ut
+                  JOIN "Course" c ON c."ID" = ut."CourseID"
+                  JOIN "User" u ON u."ID" = ut."UserID"
+                  JOIN "CourseCategory" cc ON cc."ID" = c."CourseCategoryID"
+                  WHERE c."CourseTitle" LIKE ''%' || course_title || '%'' 
+                  AND ut."IsActive"=B''1'' ';
+    
+    -- Append additional conditions based on input parameters
+    IF trainee_user_name IS NOT NULL THEN
+        sql_query := sql_query || ' AND u."UserName" = ''' || trainee_user_name || '''';
+    END IF;
+    
+--    IF training_status IS NOT NULL THEN
+--    sql_query := sql_query || ' AND (ut."IsActive"::text OR ut."AssignmentReasonCode"::text) = ''' || training_status::text || '''';
+--	END IF;
+    IF training_status IS NOT NULL THEN
+    sql_query := sql_query || ' AND ( (ut."IsActive" = ''' || training_status::bit || ''') OR (ut."AssignmentReasonCode"::text = ''' || training_status::text || ''') )';
+	END IF;
+    IF categoryId IS NOT NULL THEN
+        sql_query := sql_query || ' AND cc."ID" = ' || categoryId;
+    END IF;
+    if is_latest <> 0 then
+    	sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest;
+    else sql_query := sql_query || 'AND c."RevisionSequenceNumber" = ' || revision_no;
+    end if;
+    IF status IS NOT NULL THEN
+        sql_query := sql_query || ' AND ut."ProgressStatusID" = ' || status;
+    END IF;
+
+    -- Add ORDER BY clause
+     sql_query := sql_query || ' ORDER BY ' || 
+                 CASE 
+                     WHEN sorted_by = 'trainee_name' THEN 'u."FirstName"'
+                     WHEN sorted_by = 'course_name' THEN 'c."CourseTitle"'
+                     when sorted_by = 'course_id' then 'c."ID"'
+                     when sorted_by = 'revision_no' then 'c."RevisionSequenceNumber"'
+                     when sorted_by = 'start_date' then 'ut."StartDate"'
+                     when sorted_by = 'end_date' then 'ut."EndDate"'
+                     when sorted_by = 'completion_date' then 'ut."CompletionDate"'
+                     when sorted_by = 'completed_percentage' then 'ut."CompletedPercentage"'
+                     when sorted_by = 'status' then 'ut."ProgressStatusID"'
+                     when sorted_by = 'supervisor' then 'u."ManagerID"'
+                     ELSE 'u."FirstName"'  -- Default to trainee_name
+                 END;
+	
+	-- Add the order direction dynamically (asc or desc)
+    sql_query := sql_query || ' ' || CASE WHEN order_by = 'desc' THEN 'DESC' ELSE 'ASC' END; 
+    
+    -- Apply LIMIT/OFFSET
+    sql_query := sql_query || ' LIMIT ' || limit_value ||
+                 ' OFFSET ' || offset_value;
+    -- Execute the dynamically constructed query
+    RETURN QUERY EXECUTE sql_query;
+END;
+$$;
+
