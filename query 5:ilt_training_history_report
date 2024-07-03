@@ -1,0 +1,102 @@
+
+select * from ilt_training_history(limit_value:=500,course_title:='ho',is_latest_course:=1,training_status_number:=null,start_date_to:='2024-1-1',course_revision_number:=2);
+-- departmentId =51 logistic
+-- status_num: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
+-- training_status: 1=active, 0=deactivated, 7=unAssigned
+-- job_title =196 legal counselor
+-- job_title cannot be filtered as the table is not associated with any other table
+-- is_latest_course has to be passed every time. to use custom revision number, is_latest_course has to be turned off.
+
+create or replace function ilt_training_history(
+course_title text default null,
+is_latest_course int default 1,
+course_revision_number int default null,
+trainee_username text default null,
+usergroupId int default null,
+training_status_number int default 1,
+status_number int default null,
+categoryId int default null,
+departmentId int default null,
+job_title int default null,
+start_date_from date default null,
+start_date_to date default null,
+end_date_from date default null,
+end_date_to date default null,
+sorted_by TEXT DEFAULT 'department',
+order_by TEXT DEFAULT 'asc',
+limit_value INT DEFAULT 8,
+offset_value INT DEFAULT 0
+)
+returns table(
+trainee_first_name text,
+trainee_last_name text,
+supervisor_first_name text,
+supervisor_last_name text,
+user_group_name text,
+courseId text,
+course_name text,
+revision_label int,
+instance_title text,
+start_date date,
+end_date date,
+contains_quiz text,
+max_attempts int,
+total_attempts int,
+failed_attempts int,
+quiz_percentage int,
+status text,
+comments_data text
+)
+LANGUAGE plpgsql
+AS $$ 
+DECLARE
+    sql_query TEXT;
+begin
+	sql_query:='select u1."FirstName"::text, u1."LastName"::text, u2."FirstName"::text ,u2."LastName"::text, ug."GroupName"::text ,c."CourseCode"::text,
+				c."CourseTitle"::text, c."RevisionSequenceNumber"::int ,ci."Title"::text as "Instance Title",ut."StartDate"::date,ut."EndDate"::date,
+				CASE WHEN EXISTS (SELECT 1 FROM "Quiz" q WHERE q."CourseID" = c."ID") THEN ''Yes'' ELSE ''No'' END AS "Contains Quiz",
+				q2."TotalAttempts" as "Max Attempts", (select count(*) from "TrainingQuiz" tq2 where tq2."QuizID"=q2."ID" and tq2."TrainingID"=ut."ID" )::int as "Total Attempts",
+				(select count(*) from "TrainingQuiz" tq2 where tq2."QuizID"=q2."ID" and tq2."TrainingID"=ut."ID" and tq2."ObtainedPercentage"<q2."PassingPercentage")::int as "Failed Attempts",
+				tq."ObtainedPercentage"::int as "Quiz Percentage",pst."StatusTitle"::text,ut."Comments"::text
+				from "User" u1 join "User" u2 on u1."ManagerID"=u2."ID" join "UserTraining" ut on ut."UserID" =u1."ID" left join "UserGroup" ug
+				on ug."ID" =ut."UserGroupID" join "CourseInstance" ci on ut."CourseInstanceID"=ci."ID" join "Course" c on c."ID" =ci."CourseID"
+				join "CourseType" ct on ct."ID" =c."CourseTypeID" join "ProgressStatusType" pst on ut."ProgressStatusID" =pst."ID" left join "TrainingQuiz" tq 
+				on tq."TrainingID"=ut."ID" left join "Quiz" q2 on tq."QuizID" =q2."ID" left join "Department" d on d."ID"=u1."DepartmentID"
+				where u1."IsActive"=B''1'' and u1."FirstName" not like ''%validation%'' and ct."ID" =2 and ut."IsActive"=B''1''  ';
+		IF trainee_username IS NOT NULL THEN sql_query := sql_query || ' AND u1."ID" =' || trainee_username ; END IF;
+		IF course_title IS NOT NULL THEN sql_query := sql_query || ' AND c."CourseCode" LIKE ''%' || course_title || '%'' '; END IF;
+		if is_latest_course<>0 then sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest_course;
+		    else
+		    	IF course_revision_number IS NOT NULL then sql_query := sql_query || ' AND c."RevisionSequenceNumber"::text LIKE ''%' || course_revision_number || '%'' '; END IF;
+		end if;
+		if usergroupId is not null then sql_query := sql_query || ' AND ug."ID" =' || usergroupId ; END IF;
+	    IF training_status_number IS NOT NULL and training_status_number=1 THEN  sql_query := sql_query || 'and ut."IsActive"::int = 1' ; END IF;
+	    IF training_status_number IS NOT NULL and training_status_number=0 THEN  sql_query := sql_query || 'and ut."IsActive"::int = 0' ; END IF;
+		IF training_status_number IS NOT NULL and training_status_number=7 THEN  sql_query := sql_query || 'and ut."AssignmentReasonCode"::int = 7' ; END IF;
+		IF status_number IS NOT NULL THEN sql_query := sql_query || ' AND ut."ProgressStatusID" =' || status_number ; END IF;
+   		IF categoryId IS NOT NULL THEN  sql_query := sql_query || ' AND c."CourseCategoryID"::int = ' || categoryId ; END IF;
+		if departmentId is not null then sql_query := sql_query || ' AND u1."DepartmentID"::int = ' || departmentId ; END IF;
+		if start_date_from is not null then sql_query := sql_query || ' AND ut."StartDate" >= ' || quote_literal(start_date_from); end if;
+		if start_date_to is not null then sql_query := sql_query || ' AND ut."StartDate" <= ' || quote_literal(start_date_to); end if;
+		if end_date_from is not null then sql_query := sql_query || ' AND ut."EndDate" >= ' || quote_literal(end_date_from); end if;
+		if end_date_to is not null then sql_query := sql_query || ' AND ut."EndDate" <= ' || quote_literal(end_date_to); end if;
+	sql_query := sql_query || ' ORDER BY ' || 
+		CASE 
+		     WHEN sorted_by = 'trainee_name' THEN 'u1."FirstName"'
+		     WHEN sorted_by = 'supervisor' THEN 'u2."FirstName"'
+		     when sorted_by = 'usergroup' then 'ug."GroupName"'
+		     when sorted_by = 'category_id' then 'c."CourseCode"'
+		     when sorted_by = 'course_name' then 'c."CourseTitle"'
+		  	 when sorted_by = 'revision_label' then 'c."RevisionSequenceNumber"'
+		     when sorted_by = 'start_date' then 'ut.StartDate'
+		     when sorted_by = 'due_date' then 'ut."EndDate"'
+		     when sorted_by = 'status' then 'pst."StatusTitle"'
+		     ELSE 'u1."FirstName"' 
+		END;	
+		IF order_by = 'desc' then sql_query := sql_query || ' DESC';
+		else sql_query := sql_query || ' ASC';
+		END IF;
+		sql_query := sql_query || ' LIMIT ' || limit_value || 'OFFSET ' || offset_value;
+   RETURN QUERY EXECUTE sql_query;
+END;
+$$;
