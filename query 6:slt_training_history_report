@@ -1,25 +1,6 @@
+--query 6: slt_trainng_history_report
 
---query 5: ilt training history report
-
-select u1."FirstName", u1."LastName", u2."FirstName" ,u2."LastName", ug."GroupName" ,c."CourseCode" ,c."CourseTitle" 
-,c."RevisionSequenceNumber" ,ci."Title" as "Instance Title",ut."StartDate" ,ut."EndDate",CASE WHEN EXISTS (SELECT 1 FROM "Quiz" q WHERE q."CourseID" = c."ID") THEN 'Yes' ELSE 'No' END AS
-"Contains Quiz", q2."TotalAttempts" as "Max Attempts" ,
-(select count(*) from "TrainingQuiz" tq2 where tq2."QuizID"=q2."ID" and tq2."TrainingID"=ut."ID" ) as "Total Attempts",
-(select count(*) from "TrainingQuiz" tq2 where tq2."QuizID"=q2."ID" and tq2."TrainingID"=ut."ID" and tq2."ObtainedPercentage"<q2."PassingPercentage") as "Failed Attempts",
-tq."ObtainedPercentage" as "Quiz Percentage"
-, pst."StatusTitle" ,ut."Comments" 
-from "User" u1 join "User" u2 on u1."ManagerID"=u2."ID" join "UserTraining" ut on ut."UserID" =u1."ID" left join "UserGroup" ug
-on ug."ID" =ut."UserGroupID" join "CourseInstance" ci on ut."CourseInstanceID"=ci."ID"
-join "Course" c on c."ID" =ci."CourseID"
-join "CourseType" ct on ct."ID" =c."CourseTypeID" join "ProgressStatusType" pst on ut."ProgressStatusID" =pst."ID" left join "TrainingQuiz" tq 
-on tq."TrainingID"=ut."ID" left join "Quiz" q2 on tq."QuizID" =q2."ID" 
-where u1."IsActive"=B'1' and u1."FirstName" not like '%validation%' and ct."ID" =2 and ut."IsActive"=B'1'
-and c."CourseCode" like '%javascript%';
-
-
-drop function ilt_training_history;
-
-select * from ilt_training_history(limit_value:=500,course_title:='ho',trainee_username:=null,categoryId:=139,usergroupId:=null,is_latest_course:=0,training_status_number:=null,start_date_to:=null,course_revision_number:=null);
+select * from slt_training_history(limit_value:=500,trainee_username:=null,course_title:='linux',is_latest_course:=1,course_revision_number:=2,categoryId:=null,sorted_by:='trainee_name',order_by:='asc',training_status_number:=null);
 -- departmentId =51 logistic
 -- status_num: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
 -- training_status: 1=active, 0=deactivated, 7=unAssigned
@@ -27,7 +8,7 @@ select * from ilt_training_history(limit_value:=500,course_title:='ho',trainee_u
 -- job_title cannot be filtered as the table is not associated with any other table
 -- is_latest_course has to be passed every time. to use custom revision number, is_latest_course has to be turned off.
 
-create or replace function ilt_training_history(
+create or replace function slt_training_history(
 course_title text default null,
 is_latest_course int default 1,
 course_revision_number int default null,
@@ -42,6 +23,8 @@ start_date_from date default null,
 start_date_to date default null,
 end_date_from date default null,
 end_date_to date default null,
+completion_date_from date default null,
+completion_date_to date default null,
 sorted_by TEXT DEFAULT 'department',
 order_by TEXT DEFAULT 'asc',
 limit_value INT DEFAULT 8,
@@ -56,33 +39,38 @@ user_group_name text,
 courseId text,
 course_name text,
 revision_label int,
-instance_title text,
+departmnet_name text,
 start_date date,
 end_date date,
+completion_date date,
 contains_quiz text,
 max_attempts int,
 total_attempts int,
 failed_attempts int,
 quiz_percentage int,
 status text,
+mode_of_assignment text,
 comments_data text
 )
 LANGUAGE plpgsql
 AS $$ 
-DECLARE
+declare 
     sql_query TEXT;
 begin
-	sql_query:='select u1."FirstName"::text, u1."LastName"::text, u2."FirstName"::text ,u2."LastName"::text, ug."GroupName"::text ,c."CourseCode"::text,
-				c."CourseTitle"::text, c."RevisionSequenceNumber"::int ,ci."Title"::text as "Instance Title",ut."StartDate"::date,ut."EndDate"::date,
+	sql_query:='select u1."FirstName"::text, u1."LastName"::text, u2."FirstName"::text ,u2."LastName"::text, ug."GroupName"::text,c."CourseCode"::text,
+				c."CourseTitle"::text, c."RevisionSequenceNumber"::int,d."DepartmentName"::text ,ut."StartDate"::date,ut."EndDate"::date,ut."CompletionDate"::date,
 				CASE WHEN EXISTS (SELECT 1 FROM "Quiz" q WHERE q."CourseID" = c."ID") THEN ''Yes'' ELSE ''No'' END AS "Contains Quiz",
-				q2."TotalAttempts" as "Max Attempts", (select count(*) from "TrainingQuiz" tq2 where tq2."QuizID"=q2."ID" and tq2."TrainingID"=ut."ID" )::int as "Total Attempts",
-				(select count(*) from "TrainingQuiz" tq2 where tq2."QuizID"=q2."ID" and tq2."TrainingID"=ut."ID" and tq2."ObtainedPercentage"<q2."PassingPercentage")::int as "Failed Attempts",
-				tq."ObtainedPercentage"::int as "Quiz Percentage",pst."StatusTitle"::text,ut."Comments"::text
+				q2."TotalAttempts"::int as "Max Attempts", 
+				(select count(*) from "TrainingQuiz" tq2 where tq2."TrainingID"=ut."ID" )::int as "Total Attempts",
+				(select count(*) from "TrainingQuiz" tq2 where tq2."TrainingID"=ut."ID" and tq2."ObtainedPercentage"<q2."PassingPercentage")::int as "Failed Attempts",
+				max(tq."ObtainedPercentage")::int as "Quiz Percentage",
+				pst."StatusTitle"::text,ar."AssignmentReason"::text ,ut."Comments"::text
 				from "User" u1 join "User" u2 on u1."ManagerID"=u2."ID" join "UserTraining" ut on ut."UserID" =u1."ID" left join "UserGroup" ug
-				on ug."ID" =ut."UserGroupID" join "CourseInstance" ci on ut."CourseInstanceID"=ci."ID" join "Course" c on c."ID" =ci."CourseID"
-				join "CourseType" ct on ct."ID" =c."CourseTypeID" join "ProgressStatusType" pst on ut."ProgressStatusID" =pst."ID" left join "TrainingQuiz" tq 
-				on tq."TrainingID"=ut."ID" left join "Quiz" q2 on tq."QuizID" =q2."ID" left join "Department" d on d."ID"=u1."DepartmentID"
-				where  u1."FirstName" not like ''%validation%'' and ct."ID" =2   ';
+				on ug."ID" =ut."UserGroupID"  join "Course" c on c."ID" =ut."CourseID"
+				join "CourseType" ct on ct."ID" =c."CourseTypeID" join "ProgressStatusType" pst on ut."ProgressStatusID" =pst."ID" left join "AssignmentReason" ar
+				on ut."AssignmentReasonCode"=ar."ID" left join "TrainingQuiz" tq 
+				on ut."ID"=tq."TrainingID" left join "Quiz" q2 on tq."QuizID" =q2."ID" left join "Department" d on d."ID"=u1."DepartmentID"
+				where ct."ID" =1  ';
 		IF trainee_username IS NOT NULL THEN sql_query := sql_query || ' AND u1."UserName" like  ''%' ||trainee_username || '%'' '; END IF;
 		IF course_title IS NOT NULL THEN sql_query := sql_query || ' AND c."CourseCode" LIKE ''%' || course_title || '%'' '; END IF;
 		if is_latest_course<>0 then sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest_course;
@@ -100,6 +88,12 @@ begin
 		if start_date_to is not null then sql_query := sql_query || ' AND ut."StartDate" <= ' || quote_literal(start_date_to); end if;
 		if end_date_from is not null then sql_query := sql_query || ' AND ut."EndDate" >= ' || quote_literal(end_date_from); end if;
 		if end_date_to is not null then sql_query := sql_query || ' AND ut."EndDate" <= ' || quote_literal(end_date_to); end if;
+		if completion_date_from is not null then sql_query := sql_query || ' AND ut."CompletionDate" <= ' || quote_literal(completion_date_from); end if;
+		if completion_date_to is not null then sql_query := sql_query || ' AND ut."CompletionDate" <= ' || quote_literal(completion_date_to); end if;
+	sql_query := sql_query || ' GROUP BY ' || 
+			'u1."FirstName",u1."LastName",u2."FirstName", u2."LastName", ug."GroupName",c."CourseCode",c."CourseTitle",c."RevisionSequenceNumber",d."DepartmentName",
+ 			ut."StartDate",ut."EndDate",ut."CompletionDate", "Contains Quiz" ,"Max Attempts", "Total Attempts", "Failed Attempts",pst."StatusTitle",
+			ar."AssignmentReason", ut."Comments" ';
 	sql_query := sql_query || ' ORDER BY ' || 
 		CASE 
 		     WHEN sorted_by = 'trainee_name' THEN 'u1."FirstName"'
@@ -108,8 +102,10 @@ begin
 		     when sorted_by = 'category_id' then 'c."CourseCode"'
 		     when sorted_by = 'course_name' then 'c."CourseTitle"'
 		  	 when sorted_by = 'revision_label' then 'c."RevisionSequenceNumber"'
+		  	 when sorted_by = 'department' then 'd."DepartmentName"'
 		     when sorted_by = 'start_date' then 'ut.StartDate'
 		     when sorted_by = 'due_date' then 'ut."EndDate"'
+		     when sorted_by = 'completion_date' then 'ut."CompletionDate"'
 		     when sorted_by = 'status' then 'pst."StatusTitle"'
 		     ELSE 'u1."FirstName"' 
 		END;	
@@ -120,5 +116,3 @@ begin
    RETURN QUERY EXECUTE sql_query;
 END;
 $$;
-
-
