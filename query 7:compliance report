@@ -1,0 +1,98 @@
+
+SELECT * FROM course_compliance_report(
+    ARRAY[2166, 2168,2088,2170],         -- IDs of multiple courses
+    ARRAY[285, 286, 287,289,248]      -- IDs of multiple user groups
+) 
+AS result (course_name TEXT, group_285 TEXT, group_286 TEXT, group_287 text, group_289 text, group_248 text); 
+
+
+SELECT * FROM course_compliance_report(
+    ARRAY[2166, 2168,2088],         -- IDs of multiple courses
+    ARRAY[285, 286, 287,289],      -- IDs of multiple user groups
+    start_date_from:='2023-1-1',
+    end_date_to:='2024-1-1'
+) 
+AS result (course_name TEXT, group_285 TEXT, group_286 TEXT, group_287 text, group_289 text, group_248 text); 
+
+
+CREATE OR REPLACE FUNCTION course_compliance_report(
+    course_ids INTEGER[],
+    user_group_ids INTEGER[],
+    start_date_from DATE DEFAULT NULL,
+    start_date_to DATE DEFAULT NULL,
+    end_date_from DATE DEFAULT NULL,
+    end_date_to DATE DEFAULT NULL
+)
+RETURNS SETOF RECORD  -- Return a set of records (dynamic columns)
+AS $$
+DECLARE
+    sql_query TEXT;
+    col_defs TEXT;
+BEGIN
+    -- Dynamically create column definitions for user groups
+    col_defs := STRING_AGG(
+        format('MAX(CASE WHEN subquery.group_id = %L THEN subquery.all_members_approved END) AS group_%s',
+               ug_id, ug_id),
+        ', '
+    )
+    FROM unnest(user_group_ids) AS ug_id;
+
+    -- Main Query
+    sql_query := 'WITH user_group_ids AS (
+                       SELECT unnest($2) AS group_id  -- Pass user_group_ids as a parameter
+                   )
+                   SELECT subquery.course_name::text, '
+                   || col_defs || '
+                   FROM (
+                       SELECT c."CourseTitle" AS course_name, ug."ID" AS group_id,
+                              CASE 
+                                  -- All members approved (and assigned)
+                                  WHEN EXISTS (
+                                      SELECT 1 FROM "CourseCompliance" cc
+                                      WHERE cc."CourseID" = c."ID"
+                                      AND cc."UserGroupID" = ug."ID"
+                                  )
+                                  AND NOT EXISTS (
+                                      SELECT 1 FROM "User" u
+                                      JOIN "UserGroupMembers" ugm ON u."ID" = ugm."UserID"
+                                      LEFT JOIN "UserTraining" ut ON (
+                                          ut."UserID" = u."ID" 
+                                          AND ut."CourseID" = c."ID"
+                                          AND ut."ProgressStatusID" = 4  -- Approved
+                                          AND ($3 IS NULL OR ut."StartDate" >= $3) -- start_date_from
+                                          AND ($4 IS NULL OR ut."StartDate" <= $4) -- start_date_to
+                                          AND ($5 IS NULL OR ut."EndDate" >= $5)   -- end_date_from
+                                          AND ($6 IS NULL OR ut."EndDate" <= $6)   -- end_date_to
+                                      )
+                                      WHERE ugm."GroupID" = ug."ID"
+                                      AND ut."ID" IS NULL   -- Only users without approved completion in date range
+                                  ) THEN ''Yes'' 
+
+                                  -- At least one member not approved (but assigned)
+                                  WHEN EXISTS (
+                                      SELECT 1 FROM "CourseCompliance" cc
+                                      WHERE cc."CourseID" = c."ID"
+                                      AND cc."UserGroupID" = ug."ID"
+                                  ) THEN ''No''
+
+                                  -- Course not assigned to the group
+                                  ELSE ''Not Assigned''
+                              END AS all_members_approved
+                          FROM "Course" c
+                          CROSS JOIN "UserGroup" ug
+                          WHERE c."ID" = ANY($1)  
+                            AND ug."ID" IN (SELECT group_id FROM user_group_ids)
+                      ) AS subquery
+                     CROSS JOIN user_group_ids as ugi
+                     GROUP BY subquery.course_name
+                     ORDER BY subquery.course_name';
+
+    RETURN QUERY EXECUTE sql_query USING course_ids, user_group_ids, start_date_from, start_date_to, end_date_from, end_date_to;
+END;
+$$ LANGUAGE plpgsql;
+
+
+
+
+
+

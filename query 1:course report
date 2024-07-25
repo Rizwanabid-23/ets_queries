@@ -1,7 +1,8 @@
 
+
 -- query 1: course report
 
-SELECT * FROM course_report( course_title := 'cyber',is_latest := 0,revision_no := 5,limit_value := 16,offset_value := 16,order_by := 'desc');
+SELECT * FROM course_report( course_title := 'cyber',training_status:=null,status:=4,is_latest := 0,revision_no := 3,limit_value := 500,offset_value := 0,order_by := 'asc');
 --status: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
 --categoryId is to be provided in number
 --always have to pass course title and is_latest flag
@@ -13,12 +14,12 @@ SELECT * FROM course_report( course_title := 'cyber',is_latest := 0,revision_no 
 CREATE OR REPLACE FUNCTION course_report(
     course_title text,
     trainee_user_name text DEFAULT null,
-    training_status int DEFAULT null,
+    training_status int DEFAULT 1,
     categoryId int DEFAULT null,
     status int DEFAULT null,
     sorted_by text DEFAULT 'trainee_name',
     order_by text DEFAULT 'asc',
-    revision_no int DEFAULT 1,
+    revision_no int DEFAULT null,
     is_latest int default 1,
     limit_value int DEFAULT 8,
     offset_value int DEFAULT 0
@@ -45,26 +46,20 @@ BEGIN
                   JOIN "User" u ON u."ID" = ut."UserID"
                   JOIN "CourseCategory" cc ON cc."ID" = c."CourseCategoryID"
                   WHERE c."CourseTitle" LIKE ''%' || course_title || '%'' 
-                  AND ut."IsActive"=B''1'' ';
-    
+               ';
     -- Append additional conditions based on input parameters
-    IF trainee_user_name IS NOT NULL THEN
-        sql_query := sql_query || ' AND u."UserName" = ''' || trainee_user_name || '''';
-    END IF;
-    
---    IF training_status IS NOT NULL THEN
---    sql_query := sql_query || ' AND (ut."IsActive"::text OR ut."AssignmentReasonCode"::text) = ''' || training_status::text || '''';
---	END IF;
-    IF training_status IS NOT NULL THEN
-    sql_query := sql_query || ' AND ( (ut."IsActive" = ''' || training_status::bit || ''') OR (ut."AssignmentReasonCode"::text = ''' || training_status::text || ''') )';
-	END IF;
+ 	IF trainee_user_name IS NOT NULL THEN sql_query := sql_query || ' AND u."UserName" like  ''%' ||trainee_user_name || '%'' '; END IF;
+    IF training_status IS NOT NULL and training_status=1 THEN  sql_query := sql_query || 'and c."IsLatest"::int = 1 and ut."IsActive"::int=1'; END IF;
+    IF training_status IS NOT NULL and training_status=0 THEN  sql_query := sql_query || 'and ut."IsActive"::int = 0' ; END IF;
+	IF training_status IS NOT NULL and training_status=7 THEN  sql_query := sql_query || 'and ut."AssignmentReasonCode"::int = 7' ; END IF;	
+	if training_status is null then sql_query := sql_query || 'and ut."IsActive"::int=1'; END IF;
     IF categoryId IS NOT NULL THEN
         sql_query := sql_query || ' AND cc."ID" = ' || categoryId;
     END IF;
-    if is_latest <> 0 then
-    	sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest;
-    else sql_query := sql_query || 'AND c."RevisionSequenceNumber" = ' || revision_no;
-    end if;
+	if is_latest<>0 then sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest;
+	else
+		IF revision_no IS NOT NULL then sql_query := sql_query || ' AND c."RevisionSequenceNumber"::text LIKE ''%' || revision_no || '%'' '; END IF;
+	end if;
     IF status IS NOT NULL THEN
         sql_query := sql_query || ' AND ut."ProgressStatusID" = ' || status;
     END IF;

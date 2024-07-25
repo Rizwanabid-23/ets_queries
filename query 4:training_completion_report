@@ -1,5 +1,5 @@
 
-select * from training_completion_report(training_item:='cyber',course_title:='cyber',training_revision:='B',is_latest_training:=1,is_latest_course:=1,course_revision_number:=null,sorted_by:='course_code',order_by:='asc',limit_value:=200);
+select * from training_completion_report(limit_value:=10000,supervisor_username:=897,training_revision:='A',training_item:='Docker',status_num:=null,course_type_number:=1,is_latest_training:=null,is_latest_course:=null);
 -- trainee_username and supervisor_username is a number
 -- status_num: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
 -- training_status: 1=active, 0=deactivated, 7=unAssigned
@@ -63,7 +63,7 @@ begin
 	left join "JobTitle" jt on u1."JobTitleID"=jt."ID" join "UserTraining" ut on ut."UserID" =u1."ID" join "Course" c 
 	on c."ID" =ut."CourseID" join "CourseTrainingItems" cti on c."ID" =cti."CourseID" join "TrainingItem" ti on cti."TrainingItemID" =ti."ID"
 	join "CourseType" ct on c."CourseTypeID" =ct."ID"  join "CourseCategory" cc on c."CourseCategoryID" =cc."ID" join "ProgressStatusType" pst on ut."ProgressStatusID" =pst."ID" 
-	where ti."IsActive" =B''1'' and cti."IsActive"=B''1''  and c."IsActive"=B''1'' and u1."FirstName"::text not like ''%validation%'' and ti."TrainingItemCode" not like ''%Validation%'' and u1."FirstName" not like ''%Test%'' ';
+	where ti."IsActive" =B''1'' and cti."IsActive"=B''1''  and c."IsActive"=B''1'' ';
 	IF training_item IS NOT NULL THEN sql_query := sql_query || ' AND ti."TrainingItemTitle" LIKE ''%' || training_item || '%'' '; END IF;
 	IF course_title IS NOT NULL THEN sql_query := sql_query || ' AND c."CourseCode" LIKE ''%' || course_title || '%'' '; END IF;
 	if is_latest_training<>0 then sql_query := sql_query || 'AND ti."IsLatest"::int = ' || is_latest_training;

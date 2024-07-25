@@ -19,7 +19,7 @@ and c."CourseCode" like '%javascript%';
 
 drop function ilt_training_history;
 
-select * from ilt_training_history(limit_value:=500,course_title:='ho',trainee_username:=null,categoryId:=139,usergroupId:=null,is_latest_course:=0,training_status_number:=null,start_date_to:=null,course_revision_number:=null);
+select * from ilt_training_history(limit_value:=1000,course_title:=null,trainee_username:='Aafaq ul Basit',categoryId:=null,usergroupId:=240,is_latest_course:=null,training_status_number:=null,start_date_to:=null,course_revision_number:=null);
 -- departmentId =51 logistic
 -- status_num: 4=Approved, 3=Completed, 5=Failed, 2=In progress, 1=Not started
 -- training_status: 1=active, 0=deactivated, 7=unAssigned

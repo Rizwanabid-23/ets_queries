@@ -1,12 +1,15 @@
-
+drop function general_course_report;
 --query 3: General Course Report
--- is_latest_course parameter has tobe passed every time
+-- is_latest_course parameter has to be passed every time
 -- all parameters are optional in this query, defaults have been set
 -- course_revision_number is to be provided null to get all values of revision
 -- sorting with Created_date may be different on website(to be monitered)
 -- is_latest_training is to be visited as labels are in alphabets in db and do not match correctly.
+-- if i put condition of 'cc2."IsActive"=B''1'' ', regular record is affected. if i do not, other record get affexted like usergroupId=235
 
 select * from general_course_report(limit_value:=200, published_course:=0,training_item_title_name:=null,is_latest_course:=0, approverId:=651,is_latest_training:=0, course_revision_number:=null,sorted_by:=null,order_by:='asc',active_course:=1);
+
+select * from general_course_report(limit_value:=200,course_name:=null,approverId:=null, published_course:=1, usergroupId:=null,is_latest_training:=null,is_latest_course:=0,active_course:=1);
 
 CREATE OR REPLACE FUNCTION general_course_report(
   course_name TEXT DEFAULT NULL,
@@ -61,23 +64,30 @@ BEGIN
                   string_agg(DISTINCT CASE WHEN ug."IsActive" = B''1'' THEN ug."GroupName" ELSE NULL END, '', '')::text as "UserGroup",
                   c."ApprovalRequiredOnTrainingCompletion"::int
                 FROM "Course" c
-                JOIN "CourseTrainingItems" cti ON c."ID" = cti."CourseID"
+                 JOIN "CourseTrainingItems" cti ON c."ID" = cti."CourseID"
                 JOIN "TrainingItem" ti ON ti."ID" = cti."TrainingItemID"
+				left join "CourseApprovers" ca on ca."CourseID"=c."ID"
                 JOIN "CourseCategory" cc ON cc."ID" = c."CourseCategoryID"
                 JOIN "CourseType" ct ON c."CourseTypeID" = ct."ID"
                 LEFT JOIN "CourseCompliance" cc2 ON cc2."CourseID" = c."ID"
                 LEFT JOIN "UserGroup" ug ON cc2."UserGroupID" = ug."ID" 
-                WHERE 1 = 1   '; -- Placeholder for dynamic conditions
-    IF active_course <> 1 THEN
+                WHERE 1 = 1  and cc2."IsActive"=B''1'' '; -- Placeholder for dynamic conditions
+    IF active_course = 0 THEN
         sql_query := sql_query || ' AND c."IsActive"::int = 0 ';
     END IF;
-    IF published_course <> 1 THEN
+   IF active_course = 1 THEN
+        sql_query := sql_query || ' AND c."IsActive"::int = 1 ';
+    END IF;
+    IF published_course = 0 THEN
         sql_query := sql_query || ' AND c."IsPublished"::int = 0 ';
+    END IF;
+   IF published_course = 1 THEN
+        sql_query := sql_query || ' AND c."IsPublished"::int = 1 ';
     END IF;
     IF course_name IS NOT NULL THEN
         sql_query := sql_query || ' AND c."CourseTitle" LIKE ''%' || course_name || '%'' ';
     END IF;
-   if is_latest_course<>0 then
+   	if is_latest_course<>0 then
     	sql_query := sql_query || 'AND c."IsLatest"::int = ' || is_latest_course;
     else
     	IF course_revision_number IS NOT NULL THEN
@@ -100,6 +110,9 @@ BEGIN
    	IF course_type_number IS NOT NULL THEN 
         sql_query := sql_query || ' AND ct."ID"::int = ' || course_type_number ;
     END IF;
+    if approverId is not null then
+        sql_query := sql_query || ' AND ca."UserID"::int = ' || approverId ;
+    end if;
    	IF categoryId IS NOT NULL THEN 
         sql_query := sql_query || ' AND c."CourseCategoryID"::int = ' || categoryId ;
     END IF;
